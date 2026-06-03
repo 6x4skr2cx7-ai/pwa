@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>代码运行器 Enhanced</title>
+<style>
+  :root{
+    --bg:#0f1220;--panel:#071022;--muted:#9fb0d6;--accent:#2563eb;--text:#e6eef6;--success:#9be6a1;--danger:#ef4444;
+    --editor-bg:#071022;--editor-border:#22324a;--console-bg:#071022;
+  }
+  [data-theme="light"]{
+    --bg:#f6f8fb;--panel:#ffffff;--muted:#4b5563;--accent:#2563eb;--text:#0b2545;--success:#0f5132;--danger:#b91c1c;
+    --editor-bg:#ffffff;--editor-border:#d1d5db;--console-bg:#f3f4f6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,system-ui,monospace;padding:18px;display:flex;gap:18px;height:100vh}
+  .col{flex:1;display:flex;flex-direction:column;gap:10px;min-width:320px}
+  .header{display:flex;align-items:center;gap:8px}
+  .meta{color:var(--muted);font-size:13px}
+  .toolbar{display:flex;gap:8px;align-items:center}
+  button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--text)}
+  button.small{padding:6px 8px;font-size:13px;border-radius:6px}
+  .editor-wrap{display:flex;gap:8px;border-radius:10px;overflow:hidden;border:1px solid var(--editor-border);background:var(--panel);height:420px}
+  .gutter{width:56px;background:rgba(0,0,0,0.06);color:var(--muted);padding:10px 8px;overflow:hidden;text-align:right;font-family:monospace;font-size:13px;line-height:20px}
+  .gutter .line{padding:0 6px}
+  textarea{flex:1;border:0;outline:none;padding:12px 14px;background:var(--editor-bg);color:var(--text);font-family:Consolas,monospace;font-size:13px;line-height:20px;resize:none;height:100%}
+  .preview-wrap{position:relative;flex:1;display:flex;flex-direction:column;min-height:420px;border-radius:10px;overflow:hidden;border:1px solid var(--editor-border);background:#fff}
+  iframe{flex:1;border:0;background:#fff}
+  .console{height:150px;background:var(--console-bg);color:var(--success);padding:10px;border-radius:10px;overflow:auto;font-family:monospace;font-size:12px}
+  .error-bar{display:none;background:var(--danger);color:#fff;padding:8px 12px;border-radius:8px;margin-bottom:8px;font-weight:700}
+  .loading-overlay{position:absolute;inset:0;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.04));backdrop-filter: blur(2px);display:flex;align-items:center;justify-content:center;border-radius:10px;z-index:10;pointer-events:none;opacity:0;transition:opacity .18s}
+  .loading-overlay.show{opacity:1;pointer-events:auto}
+  .spinner{width:44px;height:44px;border-radius:50%;border:4px solid rgba(0,0,0,0.06);border-top-color:var(--accent);animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .top-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .status{font-size:13px;color:var(--muted)}
+  .controls-row{display:flex;gap:8px;align-items:center}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body data-theme="dark">
+  <div class="col" aria-label="编辑区">
+    <div class="header">
+      <div class="meta" id="editorLabel">📝 编辑 HTML CSS JS</div>
+      <div class="top-right">
+        <div class="status" id="autoSaveStatus" aria-live="polite">已保存</div>
+        <button id="themeToggle" class="ghost small" aria-label="切换主题">切换主题</button>
+      </div>
+    </div>
+
+    <div class="editor-wrap" role="region" aria-labelledby="editorLabel">
+      <div class="gutter" id="gutter" aria-hidden="true"></div>
+      <textarea id="editor" aria-label="代码编辑器" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" rows="20"></textarea>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="编辑器工具栏">
+      <button id="run" aria-label="运行代码">▶ 运行 Ctrl+Enter</button>
+      <button id="download" class="ghost small" aria-label="下载代码">⬇ 下载</button>
+      <button id="copyPreviewHtml" class="ghost small" aria-label="复制预览 HTML">📋 复制预览 HTML</button>
+      <button id="copyPreviewImage" class="ghost small" aria-label="复制预览截图">🖼 复制截图</button>
+      <button id="loadDemo" class="ghost small" aria-label="加载演示代码">🎯 演示</button>
+      <button id="clear" class="ghost small" aria-label="清空编辑器">🗑 清空</button>
+      <div style="flex:1"></div>
+      <div class="hint">快捷键 Ctrl+Enter 运行 Ctrl+Shift+C 清空</div>
+    </div>
+  </div>
+
+  <div class="col" aria-label="预览与控制台">
+    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+      <div>
+        <div class="meta">🖥 预览（沙箱）</div>
+        <div id="errorBar" class="error-bar" role="alert" aria-live="assertive"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="status">运行耗时 <span id="elapsed">0ms</span></div>
+        <button id="clearConsole" class="ghost small" aria-label="清空控制台">🧹 清空控制台</button>
+      </div>
+    </div>
+
+    <div class="preview-wrap" role="region" aria-label="预览窗口">
+      <div id="loading" class="loading-overlay" aria-hidden="true"><div class="spinner" aria-hidden="true"></div></div>
+      <iframe id="preview" sandbox="allow-scripts" title="预览窗口"></iframe>
+    </div>
+
+    <div class="meta">📟 控制台输出</div>
+    <div id="console" class="console" role="log" aria-live="polite">[系统] 就绪，点击运行或按 Ctrl+Enter</div>
+  </div>
+
+<script>
+/* Enhanced Runner Script
+   功能
+   - iframe srcdoc 沙箱化与 CSP
+   - 控制台桥接与错误显示
+   - loading 动画与运行计时
+   - 自动保存到 localStorage 并恢复
+   - 行号列同步滚动
+   - 主题切换（暗/亮）
+   - 复制预览 HTML 与截图（同源时可用）
+   - 无障碍属性与键盘快捷键
+*/
+
+/* 配置 */
+const STORAGE_KEY = 'runner:autosave:v1';
+const THEME_KEY = 'runner:theme:v1';
+const AUTO_SAVE_DELAY = 700; // ms
+const LOAD_TIMEOUT_MS = 6000;
+
+/* DOM */
+const editor = document.getElementById('editor');
+const gutter = document.getElementById('gutter');
+const runBtn = document.getElementById('run');
+const downloadBtn = document.getElementById('download');
+const loadDemoBtn = document.getElementById('loadDemo');
+const clearBtn = document.getElementById('clear');
+const preview = document.getElementById('preview');
+const consoleDiv = document.getElementById('console');
+const clearConsoleBtn = document.getElementById('clearConsole');
+const errorBar = document.getElementById('errorBar');
+const loading = document.getElementById('loading');
+const elapsed = document.getElementById('elapsed');
+const autoSaveStatus = document.getElementById('autoSaveStatus');
+const themeToggle = document.getElementById('themeToggle');
+const copyPreviewHtmlBtn = document.getElementById('copyPreviewHtml');
+const copyPreviewImageBtn = document.getElementById('copyPreviewImage');
+
+/* 初始演示代码 */
+const demo = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Demo</title>
+<style>body{font-family:system-ui,Segoe UI,Arial;background:#f7fbff;color:#0b2545;padding:24px}</style>
+</head>
+<body>
+  <h1 style="color:#2563eb">🎉 欢迎</h1>
+  <p>这是一个安全沙箱内的演示</p>
+  <script>
+    console.log('控制台消息：演示启动');
+    console.warn('演示警告示例');
+    Promise.reject(new Error('未捕获的 Promise 错误示例'));
+  <\/script>
+</body>
+</html>`;
+
+/* 辅助函数 */
+function addLog(msg, level='info'){
+  const t = new Date().toLocaleTimeString();
+  const prefix = level==='error' ? '❌' : (level==='warn' ? '⚠️' : 'ℹ️');
+  consoleDiv.innerHTML += `<div>[${t}] ${prefix} ${escapeHtml(msg)}</div>`;
+  consoleDiv.scrollTop = consoleDiv.scrollHeight;
+}
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showLoading(show){ if(show) loading.classList.add('show'); else loading.classList.remove('show'); }
+function showError(msg){ errorBar.style.display='block'; errorBar.textContent = msg; }
+function hideError(){ errorBar.style.display='none'; errorBar.textContent=''; }
+
+/* 行号渲染与同步 */
+function updateGutter(){
+  const lines = editor.value.split('\n').length || 1;
+  let html = '';
+  for(let i=1;i<=lines;i++) html += `<div class="line">${i}</div>`;
+  gutter.innerHTML = html;
+}
+editor.addEventListener('input', () => { updateGutter(); scheduleAutoSave(); });
+editor.addEventListener('scroll', () => { gutter.scrollTop = editor.scrollTop; });
+
+/* 自动保存 */
+let saveTimer = null;
+function scheduleAutoSave(){
+  autoSaveStatus.textContent = '保存中...';
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try{
+      localStorage.setItem(STORAGE_KEY, editor.value);
+      autoSaveStatus.textContent = '已保存';
+    }catch(e){
+      autoSaveStatus.textContent = '保存失败';
+    }
+  }, AUTO_SAVE_DELAY);
+}
+
+/* 恢复草稿 */
+function restoreDraft(){
+  try{
+    const v = localStorage.getItem(STORAGE_KEY);
+    if(v){
+      editor.value = v;
+      addLog('已恢复上次草稿', 'info');
+    } else {
+      editor.value = '<h1 style="color:#2563eb">Hello Runner</h1>\\n<p>在此处编辑 HTML/CSS/JS，然后运行</p>\\n<script>console.log(\"示例输出\")<\\/script>';
+    }
+  }catch(e){
+    editor.value = demo;
+  }
+  updateGutter();
+}
+
+/* 主题切换 */
+function loadTheme(){
+  const t = localStorage.getItem(THEME_KEY) || 'dark';
+  document.body.setAttribute('data-theme', t);
+}
+function toggleTheme(){
+  const cur = document.body.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.body.setAttribute('data-theme', next);
+  localStorage.setItem(THEME_KEY, next);
+}
+themeToggle.addEventListener('click', toggleTheme);
+
+/* 构建安全 srcdoc */
+function buildSrcdoc(userHtml){
+  const csp = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none';";
+  const bridge = `
+<script>
+  (function(){
+    function send(type,content,stack){
+      try{ window.parent.postMessage({type:'runner-console',level:type,content:String(content),stack:stack||null}, '*'); }catch(e){}
+    }
+    const origLog=console.log,origWarn=console.warn,origError=console.error;
+    console.log=function(...a){ origLog.apply(console,a); send('info', a.join(' ')); };
+    console.warn=function(...a){ origWarn.apply(console,a); send('warn', a.join(' ')); };
+    console.error=function(...a){ origError.apply(console,a); send('error', a.join(' ')); };
+    window.addEventListener('error', function(ev){ send('error', ev.message, ev.error && ev.error.stack); });
+    window.addEventListener('unhandledrejection', function(ev){ send('error', ev.reason && (ev.reason.message || ev.reason), ev.reason && ev.reason.stack); });
+    window.addEventListener('load', function(){ send('info','__loaded__'); });
+  })();
+<\/script>
+`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body>${bridge}${userHtml}</body></html>`;
+}
+
+/* 运行代码 */
+function runCode(){
+  hideError();
+  const code = editor.value.trim() || '<h3 style="color:#666">请在左侧输入代码</h3>';
+  const t0 = performance.now();
+  showLoading(true);
+  runBtn.disabled = true;
+  addLog('已发送代码到沙箱，等待输出', 'info');
+
+  let loaded = false;
+  const onLoaded = (ev) => {
+    if(ev.source !== preview.contentWindow) return;
+    const d = ev.data;
+    if(d && d.type === 'runner-console' && d.level === 'info' && d.content === '__loaded__'){
+      loaded = true;
+      const ms = Math.round(performance.now() - t0);
+      elapsed.textContent = ms + 'ms';
+      showLoading(false);
+      runBtn.disabled = false;
+    }
+  };
+  window.addEventListener('message', onLoaded, {once:true});
+
+  // 超时保护
+  setTimeout(() => {
+    if(!loaded){
+      showLoading(false);
+      runBtn.disabled = false;
+      showError('运行超时或页面未触发加载事件，可能是长脚本或阻塞');
+      addLog('运行可能超时或阻塞', 'warn');
+    }
+  }, LOAD_TIMEOUT_MS);
+
+  preview.srcdoc = buildSrcdoc(code);
+}
+
+/* 父窗口接收日志 */
+window.addEventListener('message', (ev) => {
+  if(ev.source !== preview.contentWindow) return;
+  const d = ev.data;
+  if(!d || d.type !== 'runner-console') return;
+  const level = d.level || 'info';
+  const content = d.content || '';
+  const stack = d.stack || null;
+  if(content === '__loaded__') return;
+  if(level === 'error'){
+    showError(content);
+    if(stack) addLog(content + '\n' + stack, 'error'); else addLog(content, 'error');
+  } else if(level === 'warn'){
+    addLog(content, 'warn');
+  } else {
+    addLog(content, 'info');
+  }
+});
+
+/* 下载代码 */
+function downloadCode(){
+  const blob = new Blob([editor.value || ''], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'snippet.html'; document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  addLog('代码已准备下载', 'info');
+}
+
+/* 复制预览 HTML */
+async function copyPreviewHtml(){
+  try{
+    const win = preview.contentWindow;
+    if(!win) throw new Error('预览尚未初始化');
+    const html = win.document.documentElement.outerHTML;
+    await navigator.clipboard.writeText(html);
+    addLog('预览 HTML 已复制到剪贴板', 'info');
+  }catch(e){
+    addLog('复制预览 HTML 失败: ' + e.message, 'error');
+  }
+}
+
+/* 复制预览截图 */
+async function copyPreviewImage(){
+  try{
+    const win = preview.contentWindow;
+    if(!win) throw new Error('预览尚未初始化');
+    const doc = win.document;
+    const width = Math.min(1200, Math.max(300, doc.documentElement.scrollWidth || 800));
+    const height = Math.min(1200, Math.max(200, doc.documentElement.scrollHeight || 600));
+    const serialized = new XMLSerializer().serializeToString(doc.documentElement);
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${height} (http://www.w3.org/2000/svg'%20width='$%7Bwidth%7D'%20height='$%7Bheight%7D)'><foreignObject width='100%' height='100%'>${serialized}</foreignObject></svg>`;
+    const blob = new Blob([svg], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = async () => {
+      try{
+        const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(img,0,0);
+        canvas.toBlob(async (b) => {
+          try{
+            const item = new ClipboardItem({'image/png': b});
+            await navigator.clipboard.write([item]);
+            addLog('预览截图已复制到剪贴板', 'info');
+          }catch(err){
+            const url2 = URL.createObjectURL(b);
+            const a = document.createElement('a'); a.href = url2; a.download = 'preview.png'; document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url2);
+            addLog('浏览器不支持直接复制图片，已触发下载', 'warn');
+          }
+        }, 'image/png');
+      }finally{ URL.revokeObjectURL(url); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); addLog('生成截图失败', 'error'); };
+    img.src = url;
+  }catch(e){
+    addLog('复制预览截图失败: ' + e.message, 'error');
+  }
+}
+
+/* 事件绑定 */
+runBtn.addEventListener('click', runCode);
+downloadBtn.addEventListener('click', downloadCode);
+loadDemoBtn.addEventListener('click', () => { editor.value = demo; updateGutter(); scheduleAutoSave(); addLog('演示代码已加载', 'info'); runCode(); });
+clearBtn.addEventListener('click', () => { editor.value=''; updateGutter(); scheduleAutoSave(); addLog('编辑器已清空','info'); });
+clearConsoleBtn.addEventListener('click', () => { consoleDiv.innerHTML='[系统] 控制台已清空'; addLog('控制台已清空','info'); });
+copyPreviewHtmlBtn.addEventListener('click', copyPreviewHtml);
+copyPreviewImageBtn.addEventListener('click', copyPreviewImage);
+
+/* 快捷键 */
+editor.addEventListener('keydown', (e) => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runCode(); }
+  if((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'C' || e.key === 'c')){ e.preventDefault(); editor.value=''; updateGutter(); scheduleAutoSave(); addLog('编辑器已清空','info'); }
+});
+
+/* 初始化 */
+function init(){
+  loadTheme();
+  restoreDraft();
+  updateGutter();
+  addLog('就绪：按 Ctrl+Enter 运行或点击运行按钮','info');
+}
+init();
+</script>
+</body>
+</html>
